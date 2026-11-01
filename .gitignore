@@ -1,0 +1,62 @@
+# ==========================================
+# macOS (OS X) System Files
+# ==========================================
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon\r
+._*
+.Spotlight-V100
+.Trashes
+*.icloud
+
+# ==========================================
+# Shell Scripts & Environments (.sh)
+# ==========================================
+# Environment variable files (sensitive data)
+.env
+.env.local
+.env.*.local
+
+# Backup and temporary script files
+*.bak
+*.tmp
+*.swp
+
+# ==========================================
+# PowerShell (.ps1)
+# ==========================================
+# PowerShell module dependencies or local data
+.psmodule/
+*.log
+*.err
+*.out
+
+# ==========================================
+# Generic Application & Build Artifacts
+# ==========================================
+# Dependencies
+node_modules/
+vendor/
+packages/
+
+# Build outputs and binaries
+bin/
+obj/
+dist/
+out/
+build/
+*.exe
+*.dll
+*.so
+*.dylib
+*.app/
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
