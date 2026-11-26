@@ -172,6 +172,8 @@ final class Editor: ObservableObject {
 
     var frameStep = 1.0 / 30
     var dragging = false { didSet { if !dragging { scrubAudio?.reset() } } }
+    /// Set when the playhead is clicked/dragged during playback: playback resumes from there on release.
+    var resumeAfterDrag = false
     var scrubAudio: ScrubAudio?
     private var displaySize: CGSize?   // video size as displayed (preferred transform applied)
     private var lastStepWall: CFTimeInterval = 0
@@ -628,10 +630,17 @@ struct TimelineView: View {
                 Color.clear.contentShape(Rectangle())
                     .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("tl"))
                         .onChanged { v in
-                            if !e.dragging { e.pause(); e.dragging = true; NSApp.keyWindow?.makeFirstResponder(nil) }
+                            if !e.dragging {
+                                e.resumeAfterDrag = e.isPlaying
+                                e.pause(); e.dragging = true; NSApp.keyWindow?.makeFirstResponder(nil)
+                            }
                             e.setPlayhead(tOf(v.location.x))
                         }
-                        .onEnded { _ in e.dragging = false })
+                        .onEnded { _ in
+                            e.dragging = false
+                            // Clicked during playback: continue playing from the new point
+                            if e.resumeAfterDrag { e.resumeAfterDrag = false; e.togglePlay() }
+                        })
 
                 // Playhead
                 Rectangle().fill(Color.white)
@@ -805,6 +814,8 @@ struct ContentView: View {
                 Button("Reveal in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: e.outputPath)])
                 }
+                // Back to the editor (trim/settings kept) to compress the same video again
+                Button("Back") { e.phase = .editing }.help("Change settings and compress again")
                 Button("Done") { NSApp.terminate(nil) }.keyboardShortcut(.defaultAction)
             }
         case .failed(let msg):

@@ -21,6 +21,7 @@ OUTPUT=""
 START_TIME=""
 END_TIME=""
 TONEMAP_SDR=0
+AUDIO_VOLUMES=""
 
 # Convert [[HH:]MM:]SS[.ms] or plain seconds to seconds (empty output if invalid)
 to_seconds() {
@@ -30,7 +31,7 @@ to_seconds() {
 }
 
 usage() {
-    echo "Usage: $0 -i <input_file> [-s target_size_mb] [-w width] [-h height] [-r rotation_degrees] [-b start_time] [-e end_time] [-t] [-o output_file]"
+    echo "Usage: $0 -i <input_file> [-s target_size_mb] [-w width] [-h height] [-r rotation_degrees] [-b start_time] [-e end_time] [-t] [-a volumes] [-o output_file]"
     echo ""
     echo "Options:"
     echo "  -i  Input video file (required)"
@@ -42,6 +43,8 @@ usage() {
     echo "  -b  Start time: seconds or [HH:]MM:SS[.ms] (default: start of video)"
     echo "  -e  End time: seconds or [HH:]MM:SS[.ms] (default: end of video)"
     echo "  -t  Tone-map HDR input to SDR (needs an ffmpeg build with zscale/libzimg; default keeps HDR)"
+    echo "  -a  Volume per audio track, comma-separated (1 = unchanged, 0.5 = half, 0 = muted; default 1)."
+    echo "      All audio tracks are mixed into one (e.g. OBS game + mic tracks)"
     echo "  -o  Output file path (default: <input>_compressed.mp4)"
     echo ""
     echo "Examples:"
@@ -51,6 +54,7 @@ usage() {
     echo "  $0 -i video.mov -w 1280"
     echo "  $0 -i video.mov -b 0:30 -e 1:45"
     echo "  $0 -i video.mov -r 90 -o rotated.mp4"
+    echo "  $0 -i obs.mp4 -a 1,0.6"
 }
 
 # Show usage if long help is requested
@@ -62,7 +66,7 @@ for arg in "$@"; do
 done
 
 # Parse arguments (order-independent flags)
-while getopts "i:s:w:h:r:b:e:to:" opt; do
+while getopts "i:s:w:h:r:b:e:ta:o:" opt; do
     case $opt in
         i) INPUT="$OPTARG" ;;
         s) TARGET_SIZE_MB="$OPTARG" ;;
@@ -72,6 +76,7 @@ while getopts "i:s:w:h:r:b:e:to:" opt; do
         b) START_TIME="$OPTARG" ;;
         e) END_TIME="$OPTARG" ;;
         t) TONEMAP_SDR=1 ;;
+        a) AUDIO_VOLUMES="$OPTARG" ;;
         o) OUTPUT="$OPTARG" ;;
         \?)
             usage
@@ -226,6 +231,36 @@ else
     VIDEO_ARGS=(-c:v libx264 -preset slow -pix_fmt yuv420p)
 fi
 
+# Audio: every audio track is mixed into one, each at its own volume
+IFS=', ' read -r -a VOLUMES <<< "$AUDIO_VOLUMES"
+for v in "${VOLUMES[@]}"; do
+    if ! [[ "$v" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        echo "Error: Invalid audio volume '$v' (use numbers like 1, 0.5 or 0)"
+        exit 1
+    fi
+done
+AUDIO_COUNT=$(ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 "$INPUT" 2>/dev/null | grep -c .)
+MAP_ARGS=(-map 0:v:0)
+AUDIO_DESC="none"
+if [ "$AUDIO_COUNT" -gt 0 ]; then
+    CHAINS=""; LABELS=""; PCTS=""
+    for ((i = 0; i < AUDIO_COUNT; i++)); do
+        v="${VOLUMES[$i]:-1}"
+        CHAINS="${CHAINS}[0:a:${i}]volume=${v}[a${i}];"
+        LABELS="${LABELS}[a${i}]"
+        PCTS="${PCTS}${PCTS:+, }$(awk -v v="$v" 'BEGIN { printf "%d%%", v * 100 + 0.5 }')"
+    done
+    # normalize=0: the volumes are exactly as given (amix would otherwise divide every track by the track count)
+    if [ "$AUDIO_COUNT" -gt 1 ]; then
+        MIX="${LABELS}amix=inputs=${AUDIO_COUNT}:normalize=0[aout]"
+        AUDIO_DESC="$AUDIO_COUNT tracks mixed into one ($PCTS)"
+    else
+        MIX="[a0]anull[aout]"
+        AUDIO_DESC="1 track ($PCTS)"
+    fi
+    MAP_ARGS=(-filter_complex "${CHAINS}${MIX}" -map 0:v:0 -map "[aout]")
+fi
+
 echo ""
 echo "Input file: $INPUT"
 [ -n "$START_TIME$END_TIME" ] && echo "Clip: ${START_SEC}s to ${END_SEC}s"
@@ -234,6 +269,7 @@ echo "Target size: ${TARGET_SIZE_MB}MB (using ${SAFE_TARGET_SIZE_MB}MB with safe
 echo "Output resolution: ${RESOLUTION_DESC}"
 echo "Rotation: ${ROTATION}° clockwise"
 echo "Encoding: ${ENCODE_DESC}"
+echo "Audio: ${AUDIO_DESC}"
 echo "Target video bitrate: $((TARGET_VIDEO_BITRATE / 1000))kbps"
 echo "Output file: $OUTPUT"
 echo ""
@@ -264,6 +300,7 @@ fi
 ffmpeg -ss "$START_SEC" -i "$INPUT" \
     -t "$DURATION" \
     -vf "$FILTER" \
+    "${MAP_ARGS[@]}" \
     "${VIDEO_ARGS[@]}" \
     -b:v ${TARGET_VIDEO_BITRATE} \
     -maxrate ${TARGET_VIDEO_BITRATE} \
